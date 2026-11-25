@@ -21,10 +21,14 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-          cache: gradle
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.3.1'
 
       - name: Verify project integrity via gameturbo-admin
         run: |
@@ -32,10 +36,10 @@ jobs:
           ./gameturbo-admin/gameturbo-admin verify
 
       - name: Run Unit & Robolectric Tests
-        run: ./gradlew :app:testDebugUnitTest --stacktrace
+        run: gradle :app:testDebugUnitTest --stacktrace
 
       - name: Build Debug APK
-        run: ./gradlew :app:assembleDebug --stacktrace
+        run: gradle :app:assembleDebug --stacktrace
 
       - name: Verify Debug APK & SHA-256
         run: |
@@ -59,7 +63,7 @@ jobs:
         run: |
           echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > release-upload.jks
           export KEYSTORE_PATH="$(pwd)/release-upload.jks"
-          ./gradlew :app:assembleRelease --stacktrace
+          gradle :app:assembleRelease --stacktrace
           APK_REL="app/build/outputs/apk/release/app-release.apk"
           test -f "$APK_REL"
           sha256sum "$APK_REL" | tee release-apk.sha256

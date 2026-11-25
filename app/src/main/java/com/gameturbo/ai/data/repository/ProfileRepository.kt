@@ -28,8 +28,10 @@ class ProfileRepository(
                 keepScreenOn = false,
                 hapticFeedback = true,
                 brightnessPercent = -1,
+                mediaVolumePercent = -1,
+                preferredRefreshHz = 0,
                 isBuiltIn = true,
-                description = "Equilibrio entre telemetría periódica moderada y consumo normal del sistema."
+                description = "Equilibrio térmico y de batería."
             ),
             GamingProfileEntity(
                 name = "Gaming",
@@ -39,8 +41,10 @@ class ProfileRepository(
                 keepScreenOn = true,
                 hapticFeedback = true,
                 brightnessPercent = 85,
+                mediaVolumePercent = 75,
+                preferredRefreshHz = 120,
                 isBuiltIn = true,
-                description = "Activa modo concentración, pantalla activa durante sesiones y muestreo rápido (1.5s)."
+                description = "Máximo refresco permitido, DND y brillo alto."
             ),
             GamingProfileEntity(
                 name = "Ahorro de batería",
@@ -50,8 +54,10 @@ class ProfileRepository(
                 keepScreenOn = false,
                 hapticFeedback = false,
                 brightnessPercent = 40,
+                mediaVolumePercent = -1,
+                preferredRefreshHz = 60,
                 isBuiltIn = true,
-                description = "Reduce la frecuencia de muestreo a 8s y disminuye el brillo preferido de interfaz."
+                description = "Muestreo bajo y brillo reducido."
             )
         )
         defaults.forEach { profileDao.insertProfile(it) }
@@ -64,13 +70,16 @@ class ProfileRepository(
             focusMode = profile.focusMode,
             keepScreenOn = profile.keepScreenOn,
             hapticFeedback = profile.hapticFeedback,
-            brightnessPercent = profile.brightnessPercent
+            brightnessPercent = profile.brightnessPercent,
+            mediaVolumePercent = profile.mediaVolumePercent,
+            preferredRefreshHz = profile.preferredRefreshHz,
+            sustainedPerformanceMode = profile.category == "GAMING"
         )
         auditDao.insertLog(
             SecurityAuditEntity(
                 category = "PROFILES",
                 action = "Perfil activado",
-                detail = "${profile.name} (${profile.category}, muestreo ${profile.samplingIntervalMs}ms)",
+                detail = "${profile.name} (${profile.samplingIntervalMs}ms)",
                 authorizedMode = "Normal"
             )
         )
@@ -84,11 +93,13 @@ class ProfileRepository(
         keepScreenOn: Boolean,
         hapticFeedback: Boolean,
         brightnessPercent: Int,
+        mediaVolumePercent: Int,
+        preferredRefreshHz: Int,
         description: String
     ) = withContext(Dispatchers.IO) {
         val cleanName = SecurityValidator.sanitizeLabel(name, 36).ifBlank { "Personalizado" }
         val cleanDesc = SecurityValidator.sanitizeLabel(description, 120)
-            .ifBlank { "Perfil personalizado de Game Turbo AI." }
+            .ifBlank { "Perfil personalizado." }
         val entity = GamingProfileEntity(
             id = existingId ?: 0L,
             name = cleanName,
@@ -98,6 +109,8 @@ class ProfileRepository(
             keepScreenOn = keepScreenOn,
             hapticFeedback = hapticFeedback,
             brightnessPercent = brightnessPercent,
+            mediaVolumePercent = mediaVolumePercent,
+            preferredRefreshHz = preferredRefreshHz,
             isBuiltIn = false,
             description = cleanDesc
         )

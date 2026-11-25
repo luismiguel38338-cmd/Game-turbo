@@ -42,6 +42,11 @@ class ProfilesViewModel(private val container: AppContainer) : ViewModel() {
     fun activateProfile(profile: GamingProfileEntity) {
         viewModelScope.launch {
             container.profileRepository.activateProfile(profile)
+            container.optimizerEngine.runOptimizationPipeline(
+                profile = profile,
+                enableFocusMode = profile.focusMode,
+                measurePing = false
+            )
         }
     }
 
@@ -53,6 +58,8 @@ class ProfilesViewModel(private val container: AppContainer) : ViewModel() {
         keepScreenOn: Boolean,
         hapticFeedback: Boolean,
         brightnessPercent: Int,
+        mediaVolumePercent: Int,
+        preferredRefreshHz: Int,
         description: String
     ) {
         viewModelScope.launch {
@@ -64,6 +71,8 @@ class ProfilesViewModel(private val container: AppContainer) : ViewModel() {
                 keepScreenOn = keepScreenOn,
                 hapticFeedback = hapticFeedback,
                 brightnessPercent = brightnessPercent,
+                mediaVolumePercent = mediaVolumePercent,
+                preferredRefreshHz = preferredRefreshHz,
                 description = description
             )
         }

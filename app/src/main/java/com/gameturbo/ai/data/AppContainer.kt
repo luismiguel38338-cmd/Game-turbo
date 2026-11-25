@@ -8,6 +8,7 @@ import com.gameturbo.ai.data.repository.GameRepository
 import com.gameturbo.ai.data.repository.ProfileRepository
 import com.gameturbo.ai.data.repository.StorageRepository
 import com.gameturbo.ai.data.repository.TelemetryRepository
+import com.gameturbo.ai.games.GameOptimizerEngine
 import com.gameturbo.ai.performance.SystemTelemetryReader
 
 class AppContainer(context: Context) {
@@ -25,4 +26,10 @@ class AppContainer(context: Context) {
     )
     val storageRepository = StorageRepository(appContext, database.securityAuditDao())
     val advancedRepository = AdvancedSystemRepository(appContext, database.securityAuditDao())
+    val optimizerEngine = GameOptimizerEngine(
+        appContext,
+        telemetryReader,
+        storageRepository,
+        database.securityAuditDao()
+    )
 }

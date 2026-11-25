@@ -21,6 +21,9 @@ data class AppPreferencesState(
     val keepScreenOn: Boolean = false,
     val hapticFeedback: Boolean = true,
     val brightnessPercent: Int = -1,
+    val mediaVolumePercent: Int = -1,
+    val preferredRefreshHz: Int = 0,
+    val sustainedPerformanceMode: Boolean = false,
     val selectedAdvancedTier: String = "NORMAL"
 )
 
@@ -33,6 +36,9 @@ class PreferencesRepository(private val context: Context) {
         val KEEP_SCREEN_ON = booleanPreferencesKey("keep_screen_on")
         val HAPTIC_FEEDBACK = booleanPreferencesKey("haptic_feedback")
         val BRIGHTNESS_PERCENT = intPreferencesKey("brightness_percent")
+        val MEDIA_VOLUME_PERCENT = intPreferencesKey("media_volume_percent")
+        val PREFERRED_REFRESH_HZ = intPreferencesKey("preferred_refresh_hz")
+        val SUSTAINED_PERF_MODE = booleanPreferencesKey("sustained_perf_mode")
         val SELECTED_ADVANCED_TIER = stringPreferencesKey("selected_advanced_tier")
     }
 
@@ -44,6 +50,9 @@ class PreferencesRepository(private val context: Context) {
             keepScreenOn = prefs[Keys.KEEP_SCREEN_ON] ?: false,
             hapticFeedback = prefs[Keys.HAPTIC_FEEDBACK] ?: true,
             brightnessPercent = prefs[Keys.BRIGHTNESS_PERCENT] ?: -1,
+            mediaVolumePercent = prefs[Keys.MEDIA_VOLUME_PERCENT] ?: -1,
+            preferredRefreshHz = prefs[Keys.PREFERRED_REFRESH_HZ] ?: 0,
+            sustainedPerformanceMode = prefs[Keys.SUSTAINED_PERF_MODE] ?: false,
             selectedAdvancedTier = prefs[Keys.SELECTED_ADVANCED_TIER] ?: "NORMAL"
         )
     }
@@ -54,7 +63,10 @@ class PreferencesRepository(private val context: Context) {
         focusMode: Boolean,
         keepScreenOn: Boolean,
         hapticFeedback: Boolean,
-        brightnessPercent: Int
+        brightnessPercent: Int,
+        mediaVolumePercent: Int,
+        preferredRefreshHz: Int,
+        sustainedPerformanceMode: Boolean
     ) {
         context.dataStore.edit { prefs ->
             prefs[Keys.ACTIVE_PROFILE_ID] = profileId
@@ -63,6 +75,9 @@ class PreferencesRepository(private val context: Context) {
             prefs[Keys.KEEP_SCREEN_ON] = keepScreenOn
             prefs[Keys.HAPTIC_FEEDBACK] = hapticFeedback
             prefs[Keys.BRIGHTNESS_PERCENT] = brightnessPercent
+            prefs[Keys.MEDIA_VOLUME_PERCENT] = mediaVolumePercent
+            prefs[Keys.PREFERRED_REFRESH_HZ] = preferredRefreshHz
+            prefs[Keys.SUSTAINED_PERF_MODE] = sustainedPerformanceMode
         }
     }
 
@@ -72,9 +87,9 @@ class PreferencesRepository(private val context: Context) {
         }
     }
 
-    suspend fun setSamplingInterval(intervalMs: Long) {
+    suspend fun setSustainedPerformanceMode(enabled: Boolean) {
         context.dataStore.edit { prefs ->
-            prefs[Keys.SAMPLING_INTERVAL_MS] = intervalMs.coerceIn(1000L, 10000L)
+            prefs[Keys.SUSTAINED_PERF_MODE] = enabled
         }
     }
 

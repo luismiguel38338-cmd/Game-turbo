@@ -15,7 +15,13 @@ import android.os.Environment
 import android.os.PowerManager
 import android.os.StatFs
 import android.view.Display
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.io.File
+import java.net.InetSocketAddress
+import java.net.Socket
+import kotlin.math.abs
+import kotlin.math.roundToInt
 
 class SystemTelemetryReader(private val context: Context) {
 
@@ -28,17 +34,33 @@ class SystemTelemetryReader(private val context: Context) {
         val connectivity = readConnectivity()
         val display = readDisplay()
 
+        val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+        val sustainedSupported = pm?.isSustainedPerformanceModeSupported == true
+        val powerSaveMode = pm?.isPowerSaveMode == true
+
+        val readinessScore = computeReadinessScore(
+            ramUsedPercent = ram.usedPercent,
+            lowMemory = ram.lowMemory,
+            thermalLevel = temperature.level,
+            thermalHeadroomPercent = temperature.thermalHeadroomPercent,
+            batteryPercent = battery.levelPercent,
+            isCharging = battery.statusLabel == "Cargando",
+            powerSaveMode = powerSaveMode
+        )
+
         val overallHealth = when {
-            temperature.level == ThermalLevel.HIGH || ram.lowMemory -> "Atención requerida"
-            temperature.level == ThermalLevel.ELEVATED || ram.usedPercent > 85f -> "Carga moderada"
-            else -> "Sistema óptimo"
+            powerSaveMode -> "Ahorro activo"
+            temperature.level == ThermalLevel.HIGH || ram.lowMemory -> "Atención"
+            temperature.level == ThermalLevel.ELEVATED || ram.usedPercent > 85f -> "Carga media"
+            else -> "Óptimo"
         }
 
         val optimizationStatus = when {
-            ram.lowMemory -> "Memoria baja detectada por Android"
-            ram.usedPercent > 82f -> "Uso de RAM elevado (${ram.usedPercent.toInt()}%)"
-            temperature.level == ThermalLevel.HIGH -> "Temperatura de batería alta"
-            else -> "Parámetros estables"
+            powerSaveMode -> "Ahorro de batería activo (limita CPU/Hz)"
+            ram.lowMemory -> "Memoria baja en Android"
+            ram.usedPercent > 82f -> "RAM alta (${ram.usedPercent.toInt()}%)"
+            temperature.level == ThermalLevel.HIGH -> "Temperatura elevada"
+            else -> "Índice Gaming $readinessScore/100"
         }
 
         return DeviceSnapshot(
@@ -48,6 +70,9 @@ class SystemTelemetryReader(private val context: Context) {
             androidVersion = Build.VERSION.RELEASE ?: "Desconocida",
             sdkInt = Build.VERSION.SDK_INT,
             securityPatch = Build.VERSION.SECURITY_PATCH ?: "No disponible",
+            sustainedPerformanceSupported = sustainedSupported,
+            isPowerSaveMode = powerSaveMode,
+            gamingReadinessScore = readinessScore,
             ram = ram,
             cpu = cpu,
             battery = battery,
@@ -58,6 +83,43 @@ class SystemTelemetryReader(private val context: Context) {
             overallHealthLabel = overallHealth,
             optimizationStatusLabel = optimizationStatus
         )
+    }
+
+    private fun computeReadinessScore(
+        ramUsedPercent: Float,
+        lowMemory: Boolean,
+        thermalLevel: ThermalLevel,
+        thermalHeadroomPercent: Int?,
+        batteryPercent: Int,
+        isCharging: Boolean,
+        powerSaveMode: Boolean
+    ): Int {
+        var score = 100
+        if (lowMemory) {
+            score -= 30
+        } else if (ramUsedPercent > 85f) {
+            score -= 22
+        } else if (ramUsedPercent > 70f) {
+            score -= 10
+        }
+
+        when (thermalLevel) {
+            ThermalLevel.HIGH -> score -= 30
+            ThermalLevel.ELEVATED -> score -= 14
+            ThermalLevel.NORMAL, ThermalLevel.UNAVAILABLE -> Unit
+        }
+        if (thermalHeadroomPercent != null && thermalHeadroomPercent < 25) {
+            score -= 10
+        }
+        if (powerSaveMode) {
+            score -= 20
+        }
+        if (batteryPercent in 1..15 && !isCharging) {
+            score -= 15
+        } else if (batteryPercent in 16..25 && !isCharging) {
+            score -= 6
+        }
+        return score.coerceIn(10, 100)
     }
 
     fun readRam(): RamTelemetry {
@@ -106,7 +168,7 @@ class SystemTelemetryReader(private val context: Context) {
         val processorLabel = socModel
             ?: hardwareFromProc
             ?: Build.HARDWARE.takeIf { it.isNotBlank() && it != Build.UNKNOWN }
-            ?: "Procesador no expuesto por Android"
+            ?: "Procesador del dispositivo"
 
         val coreFreqs = (0 until cores).map { index ->
             CpuCoreFreq(
@@ -120,9 +182,9 @@ class SystemTelemetryReader(private val context: Context) {
         val governor = readSysText("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor")
 
         val restrictionNote = if (anyFreqReadable) {
-            "Frecuencias consultadas en modo lectura. Android bloquea la lectura global de /proc/stat para apps sin privilegios, por lo que no se inventa el % de carga."
+            "Frecuencias en lectura. Android restringe /proc/stat para carga global."
         } else {
-            "Android restringe el acceso directo a las frecuencias y carga de CPU en este dispositivo (SELinux). Solo se muestran metadatos oficiales del sistema."
+            "Android restringe lectura directa de frecuencias en este dispositivo (SELinux)."
         }
 
         return CpuTelemetry(
@@ -147,18 +209,18 @@ class SystemTelemetryReader(private val context: Context) {
             ?: BatteryManager.BATTERY_STATUS_UNKNOWN
         val statusLabel = when (status) {
             BatteryManager.BATTERY_STATUS_CHARGING -> "Cargando"
-            BatteryManager.BATTERY_STATUS_DISCHARGING -> "En uso (descargando)"
-            BatteryManager.BATTERY_STATUS_FULL -> "Carga completa"
-            BatteryManager.BATTERY_STATUS_NOT_CHARGING -> "Conectada (sin carga)"
-            else -> "No disponible"
+            BatteryManager.BATTERY_STATUS_DISCHARGING -> "En uso"
+            BatteryManager.BATTERY_STATUS_FULL -> "Completa"
+            BatteryManager.BATTERY_STATUS_NOT_CHARGING -> "Sin carga"
+            else -> "N/D"
         }
 
         val plugged = intent?.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) ?: 0
         val pluggedLabel = when (plugged) {
-            BatteryManager.BATTERY_PLUGGED_AC -> "Adaptador AC"
-            BatteryManager.BATTERY_PLUGGED_USB -> "Puerto USB"
-            BatteryManager.BATTERY_PLUGGED_WIRELESS -> "Carga inalámbrica"
-            else -> "Sin cargador"
+            BatteryManager.BATTERY_PLUGGED_AC -> "AC"
+            BatteryManager.BATTERY_PLUGGED_USB -> "USB"
+            BatteryManager.BATTERY_PLUGGED_WIRELESS -> "Inalámbrica"
+            else -> "Batería"
         }
 
         val tempRaw = intent?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, Int.MIN_VALUE) ?: Int.MIN_VALUE
@@ -170,7 +232,6 @@ class SystemTelemetryReader(private val context: Context) {
 
         val voltageRaw = intent?.getIntExtra(BatteryManager.EXTRA_VOLTAGE, -1) ?: -1
         val voltageMv = voltageRaw.takeIf { it > 0 }
-
         val technology = intent?.getStringExtra(BatteryManager.EXTRA_TECHNOLOGY)?.takeIf { it.isNotBlank() }
 
         val health = intent?.getIntExtra(BatteryManager.EXTRA_HEALTH, BatteryManager.BATTERY_HEALTH_UNKNOWN)
@@ -178,18 +239,17 @@ class SystemTelemetryReader(private val context: Context) {
         val healthLabel = when (health) {
             BatteryManager.BATTERY_HEALTH_GOOD -> "Buena"
             BatteryManager.BATTERY_HEALTH_OVERHEAT -> "Sobrecalentamiento"
-            BatteryManager.BATTERY_HEALTH_DEAD -> "Degradada / Dañada"
+            BatteryManager.BATTERY_HEALTH_DEAD -> "Degradada"
             BatteryManager.BATTERY_HEALTH_OVER_VOLTAGE -> "Sobrevoltaje"
             BatteryManager.BATTERY_HEALTH_COLD -> "Fría"
-            BatteryManager.BATTERY_HEALTH_UNSPECIFIED_FAILURE -> "Fallo reportado"
-            else -> "Android no la expone en este dispositivo"
+            BatteryManager.BATTERY_HEALTH_UNSPECIFIED_FAILURE -> "Fallo"
+            else -> "N/D"
         }
 
         val bm = context.getSystemService(Context.BATTERY_SERVICE) as? BatteryManager
         val currentNowUa = bm?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW)
         val currentNowMa = if (currentNowUa != null && currentNowUa != Int.MIN_VALUE && currentNowUa != 0) {
-            // Most devices report microamperes; normalize safely if value looks like µA
-            if (kotlin.math.abs(currentNowUa) > 10_000) currentNowUa / 1000 else currentNowUa
+            if (abs(currentNowUa) > 10_000) currentNowUa / 1000 else currentNowUa
         } else {
             null
         }
@@ -210,17 +270,29 @@ class SystemTelemetryReader(private val context: Context) {
         val powerManager = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
         val thermalStatusLabel = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && powerManager != null) {
             when (powerManager.currentThermalStatus) {
-                PowerManager.THERMAL_STATUS_NONE -> "Normal (Sin restricción térmica)"
+                PowerManager.THERMAL_STATUS_NONE -> "Normal"
                 PowerManager.THERMAL_STATUS_LIGHT -> "Ligera"
                 PowerManager.THERMAL_STATUS_MODERATE -> "Moderada"
                 PowerManager.THERMAL_STATUS_SEVERE -> "Severa"
                 PowerManager.THERMAL_STATUS_CRITICAL -> "Crítica"
                 PowerManager.THERMAL_STATUS_EMERGENCY -> "Emergencia"
-                PowerManager.THERMAL_STATUS_SHUTDOWN -> "Apagado térmico"
-                else -> "No disponible"
+                PowerManager.THERMAL_STATUS_SHUTDOWN -> "Apagado"
+                else -> "N/D"
             }
         } else {
-            "API térmica oficial disponible desde Android 10"
+            "API térmica desde Android 10"
+        }
+
+        val thermalHeadroomPercent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && powerManager != null) {
+            runCatching {
+                val headroom = powerManager.getThermalHeadroom(10)
+                if (!headroom.isNaN() && headroom >= 0f) {
+                    // headroom <= 1.0 indicates remaining margin before throttling
+                    ((1f - headroom).coerceIn(0f, 1f) * 100f).roundToInt()
+                } else null
+            }.getOrNull()
+        } else {
+            null
         }
 
         val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as? SensorManager
@@ -240,17 +312,16 @@ class SystemTelemetryReader(private val context: Context) {
         }
 
         val sensorNote = buildString {
-            append("Los sensores térmicos accesibles dependen del fabricante. ")
-            append("Android expone la temperatura oficial de batería y el estado térmico del sistema sin permitir lecturas directas de CPU/GPU en dispositivos no rooteados. ")
-            if (!ambientAvailable) {
-                append("Este dispositivo no incluye sensor de temperatura ambiente dedicado.")
-            }
+            append("Los sensores dependen del fabricante. ")
+            append("Solo se muestran lecturas oficiales de batería y PowerManager. ")
+            if (!ambientAvailable) append("Sin sensor ambiente dedicado.")
         }
 
         return TemperatureTelemetry(
             batteryTempC = batteryTempC,
             ambientTempC = null,
             systemThermalStatus = thermalStatusLabel,
+            thermalHeadroomPercent = thermalHeadroomPercent,
             level = level,
             sensorNote = sensorNote
         )
@@ -287,10 +358,10 @@ class SystemTelemetryReader(private val context: Context) {
 
         val transport = when {
             caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "Wi-Fi"
-            caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "Datos móviles"
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "Datos 4G/5G"
             caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "Ethernet"
             caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN) -> "VPN"
-            else -> "Otra red"
+            else -> "Red activa"
         }
 
         val hasInternet = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
@@ -311,10 +382,18 @@ class SystemTelemetryReader(private val context: Context) {
         val display = dm?.getDisplay(Display.DEFAULT_DISPLAY)
 
         val refreshRate = display?.refreshRate ?: 60f
-        val hdrSupported = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            (display?.hdrCapabilities?.supportedHdrTypes?.isNotEmpty()) == true
+        val supportedRates = display?.supportedModes
+            ?.map { it.refreshRate.roundToInt() }
+            ?.distinct()
+            ?.sorted()
+            ?.ifEmpty { listOf(refreshRate.roundToInt()) }
+            ?: listOf(refreshRate.roundToInt())
+
+        val hdrSupported = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            display?.isHdr == true
         } else {
-            false
+            @Suppress("DEPRECATION")
+            (display?.hdrCapabilities?.supportedHdrTypes?.isNotEmpty()) == true
         }
 
         val mode = display?.mode
@@ -326,9 +405,50 @@ class SystemTelemetryReader(private val context: Context) {
             heightPx = heightPx,
             densityDpi = metrics.densityDpi,
             refreshRateHz = refreshRate,
+            supportedRefreshRatesHz = supportedRates,
             hdrSupported = hdrSupported
         )
     }
+
+    suspend fun measureNetworkLatency(host: String = "1.1.1.1", port: Int = 443): PingResult? =
+        withContext(Dispatchers.IO) {
+            val samples = mutableListOf<Int>()
+            repeat(4) {
+                val startNs = System.nanoTime()
+                val ok = runCatching {
+                    Socket().use { socket ->
+                        socket.connect(InetSocketAddress(host, port), 1500)
+                    }
+                    true
+                }.getOrDefault(false)
+                if (ok) {
+                    val elapsedMs = ((System.nanoTime() - startNs) / 1_000_000L).toInt().coerceAtLeast(1)
+                    samples.add(elapsedMs)
+                }
+            }
+            if (samples.isEmpty()) return@withContext null
+            val min = samples.min()
+            val max = samples.max()
+            val avg = samples.average().roundToInt()
+            val jitter = if (samples.size >= 2) {
+                samples.zipWithNext { a, b -> abs(a - b) }.average().roundToInt()
+            } else {
+                0
+            }
+            val quality = when {
+                avg <= 45 -> "Excelente"
+                avg <= 95 -> "Estable"
+                else -> "Alta latencia"
+            }
+            PingResult(
+                avgMs = avg,
+                minMs = min,
+                maxMs = max,
+                jitterMs = jitter,
+                qualityLabel = quality,
+                host = host
+            )
+        }
 
     private fun readProcCpuHardware(): String? {
         return try {

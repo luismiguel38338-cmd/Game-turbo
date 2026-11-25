@@ -17,6 +17,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Brightness6
@@ -26,6 +29,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -38,6 +42,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -72,6 +77,8 @@ fun ProfilesScreen(
         keepScreenOn: Boolean,
         hapticFeedback: Boolean,
         brightnessPercent: Int,
+        mediaVolumePercent: Int,
+        preferredRefreshHz: Int,
         description: String
     ) -> Unit,
     onDeleteProfile: (GamingProfileEntity) -> Unit,
@@ -152,10 +159,10 @@ fun ProfilesScreen(
                                 style = MaterialTheme.typography.titleLarge,
                                 color = if (isActive) NeonCyan else MaterialTheme.colorScheme.onBackground
                             )
+                            val hzText = if (profile.preferredRefreshHz > 0) "${profile.preferredRefreshHz}Hz" else "Auto"
+                            val volText = if (profile.mediaVolumePercent >= 0) "Vol ${profile.mediaVolumePercent}%" else "Vol actual"
                             Text(
-                                text = "${profile.samplingIntervalMs / 1000.0}s · ${
-                                    if (profile.focusMode) "DND ON" else "DND OFF"
-                                } · ${
+                                text = "${profile.samplingIntervalMs / 1000.0}s · $hzText · $volText · ${
                                     if (profile.brightnessPercent < 0) "Brillo auto" else "Brillo ${profile.brightnessPercent}%"
                                 }",
                                 style = MaterialTheme.typography.labelMedium,
@@ -230,7 +237,7 @@ fun ProfilesScreen(
         ProfileEditorDialog(
             initial = editingProfile,
             onDismiss = { showEditorDialog = false },
-            onConfirm = { name, intervalMs, focus, keepOn, haptic, brightness, desc ->
+            onConfirm = { name, intervalMs, focus, keepOn, haptic, brightness, vol, hz, desc ->
                 onSaveProfile(
                     editingProfile?.id,
                     name,
@@ -239,6 +246,8 @@ fun ProfilesScreen(
                     keepOn,
                     haptic,
                     brightness,
+                    vol,
+                    hz,
                     desc
                 )
                 showEditorDialog = false
@@ -279,6 +288,8 @@ private fun ProfileEditorDialog(
         keepScreenOn: Boolean,
         hapticFeedback: Boolean,
         brightnessPercent: Int,
+        mediaVolumePercent: Int,
+        preferredRefreshHz: Int,
         description: String
     ) -> Unit
 ) {
@@ -296,12 +307,20 @@ private fun ProfileEditorDialog(
     var brightnessPercent by remember {
         mutableFloatStateOf((initial?.brightnessPercent?.takeIf { it >= 10 } ?: 80).toFloat())
     }
+    var useCustomVolume by remember { mutableStateOf((initial?.mediaVolumePercent ?: -1) >= 0) }
+    var mediaVolumePercent by remember {
+        mutableFloatStateOf((initial?.mediaVolumePercent?.takeIf { it >= 0 } ?: 75).toFloat())
+    }
+    var preferredHz by remember { mutableIntStateOf(initial?.preferredRefreshHz ?: 0) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (initial == null) "Crear perfil" else "Editar perfil") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
@@ -319,12 +338,25 @@ private fun ProfileEditorDialog(
                     valueRange = 1f..10f,
                     steps = 8
                 )
+                Text("Tasa de refresco preferida:", style = MaterialTheme.typography.bodyMedium)
+                Row(
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    listOf(0 to "Auto", 60 to "60Hz", 90 to "90Hz", 120 to "120Hz", 144 to "144Hz").forEach { (hz, label) ->
+                        FilterChip(
+                            selected = preferredHz == hz,
+                            onClick = { preferredHz = hz },
+                            label = { Text(label) }
+                        )
+                    }
+                }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Concentración")
+                    Text("Concentración (DND)")
                     Switch(checked = focusMode, onCheckedChange = { focusMode = it })
                 }
                 Row(
@@ -348,18 +380,31 @@ private fun ProfileEditorDialog(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Brillo en ventana")
+                    Text("Brillo personalizado")
                     Switch(checked = useCustomBrightness, onCheckedChange = { useCustomBrightness = it })
                 }
                 if (useCustomBrightness) {
-                    Text(
-                        text = "Brillo: ${brightnessPercent.roundToInt()}%",
-                        style = MaterialTheme.typography.bodyMedium
-                    )
+                    Text("Brillo: ${brightnessPercent.roundToInt()}%", style = MaterialTheme.typography.bodyMedium)
                     Slider(
                         value = brightnessPercent,
                         onValueChange = { brightnessPercent = it },
                         valueRange = 15f..100f
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Volumen gaming")
+                    Switch(checked = useCustomVolume, onCheckedChange = { useCustomVolume = it })
+                }
+                if (useCustomVolume) {
+                    Text("Volumen multimedia: ${mediaVolumePercent.roundToInt()}%", style = MaterialTheme.typography.bodyMedium)
+                    Slider(
+                        value = mediaVolumePercent,
+                        onValueChange = { mediaVolumePercent = it },
+                        valueRange = 0f..100f
                     )
                 }
             }
@@ -374,6 +419,8 @@ private fun ProfileEditorDialog(
                         keepScreenOn,
                         hapticFeedback,
                         if (useCustomBrightness) brightnessPercent.roundToInt() else -1,
+                        if (useCustomVolume) mediaVolumePercent.roundToInt() else -1,
+                        preferredHz,
                         description
                     )
                 },

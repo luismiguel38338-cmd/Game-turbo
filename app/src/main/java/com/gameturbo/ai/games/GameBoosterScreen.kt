@@ -8,6 +8,7 @@ import android.graphics.Canvas
 import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
 import android.provider.Settings
+import android.text.format.Formatter
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -29,6 +30,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DisplaySettings
 import androidx.compose.material.icons.filled.DoNotDisturbOn
@@ -65,6 +67,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.R
@@ -75,10 +78,12 @@ import com.gameturbo.ai.data.repository.LaunchableAppItem
 import com.gameturbo.ai.security.SecurityValidator
 import com.gameturbo.ai.ui.theme.CyberCard
 import com.gameturbo.ai.ui.theme.ElectricRoyalBlue
+import com.gameturbo.ai.ui.theme.MetricKeyValueRow
 import com.gameturbo.ai.ui.theme.NeonCyan
 import com.gameturbo.ai.ui.theme.ObsidianDeep
 import com.gameturbo.ai.ui.theme.RoyalSurface
 import com.gameturbo.ai.ui.theme.StatusElevated
+import com.gameturbo.ai.ui.theme.StatusHigh
 import com.gameturbo.ai.ui.theme.StatusInfo
 import com.gameturbo.ai.ui.theme.StatusOptimal
 import com.gameturbo.ai.ui.theme.StatusPill
@@ -93,7 +98,9 @@ fun GameBoosterScreen(
     onRegisterApp: (LaunchableAppItem, Long?, Boolean, Boolean) -> Unit,
     onUpdateGame: (RegisteredGameEntity) -> Unit,
     onRemoveGame: (String) -> Unit,
-    onLaunchGame: (Context, GameCardModel) -> Unit,
+    onOptimizeAndLaunch: (GameCardModel) -> Unit,
+    onConfirmLaunch: (Context, GameCardModel) -> Unit,
+    onDismissLaunch: () -> Unit,
     onToggleFocusMode: () -> Unit,
     onClearSessions: () -> Unit,
     modifier: Modifier = Modifier
@@ -281,7 +288,8 @@ fun GameBoosterScreen(
                         items(state.registeredGames, key = { it.entity.packageName }) { game ->
                             GameItemCard(
                                 model = game,
-                                onLaunch = { onLaunchGame(context, game) },
+                                isBusy = state.isOptimizingLaunch,
+                                onOptimizeAndLaunch = { onOptimizeAndLaunch(game) },
                                 onEdit = { editingGame = game },
                                 onDelete = { onRemoveGame(game.entity.packageName) }
                             )
@@ -297,12 +305,73 @@ fun GameBoosterScreen(
         }
     }
 
+    state.pendingBoostLaunch?.let { pending ->
+        val res = pending.result
+        AlertDialog(
+            onDismissRequest = onDismissLaunch,
+            title = { Text("Listo: ${pending.game.entity.displayName}") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    MetricKeyValueRow("Índice Gaming", "${res.readinessScore}/100", NeonCyan)
+                    MetricKeyValueRow("RAM disponible", "${res.ramBeforeMb} -> ${res.ramAfterMb} MB", StatusOptimal)
+                    val freedLabel = if (res.freedTempBytes > 0L) {
+                        "${res.tempFilesCleared} (${Formatter.formatShortFileSize(context, res.freedTempBytes)})"
+                    } else {
+                        "${res.tempFilesCleared} archivos"
+                    }
+                    MetricKeyValueRow("Temp. limpiados", freedLabel)
+                    MetricKeyValueRow("Modo Juego Android", res.androidGameModeLabel, NeonCyan)
+                    MetricKeyValueRow("Refresco objetivo", "${res.appliedRefreshHz} Hz")
+                    MetricKeyValueRow("DND sistema", if (res.dndApplied) "Activo" else "Omitido")
+                    MetricKeyValueRow("Brillo sistema", if (res.systemBrightnessApplied) "Aplicado" else "Modo ventana")
+                    res.mediaVolumeAppliedPercent?.let {
+                        MetricKeyValueRow("Volumen gaming", "$it%")
+                    }
+                    res.thermalHeadroomPercent?.let {
+                        MetricKeyValueRow("Margen térmico", "$it%", NeonCyan)
+                    }
+                    if (res.isPowerSaveModeActive) {
+                        MetricKeyValueRow("Ahorro energía", "Activo (limita CPU/Hz)", StatusHigh)
+                    }
+                    res.pingResult?.let {
+                        MetricKeyValueRow("Ping (${it.host})", "${it.avgMs} ms · ${it.qualityLabel}", StatusOptimal)
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = { onConfirmLaunch(context, pending.game) },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = NeonCyan,
+                        contentColor = ObsidianDeep
+                    )
+                ) {
+                    Icon(Icons.Filled.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Abrir juego", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                if (res.isPowerSaveModeActive) {
+                    TextButton(onClick = {
+                        SecurityValidator.safeStartActivity(
+                            context,
+                            Intent(Settings.ACTION_BATTERY_SAVER_SETTINGS)
+                        )
+                    }) { Text("Ajustar ahorro") }
+                } else {
+                    TextButton(onClick = onDismissLaunch) { Text("Cerrar") }
+                }
+            }
+        )
+    }
+
     if (showInfoDialog) {
         AlertDialog(
             onDismissRequest = { showInfoDialog = false },
             title = { Text("Sobre Game Booster") },
             text = {
-                Text("Game Turbo AI organiza tus juegos, registra métricas al iniciar sesión y aplica ajustes permitidos por Android. Ninguna aplicación estándar puede incrementar artificialmente los FPS.")
+                Text("Game Turbo AI optimiza antes de jugar limpiando caché propia, aplicando DND, brillo/volumen autorizados, modo sostenido y midiendo latencia real y margen térmico. Android no permite incrementar artificialmente los FPS.")
             },
             confirmButton = {
                 TextButton(onClick = { showInfoDialog = false }) { Text("Entendido") }
@@ -338,7 +407,8 @@ fun GameBoosterScreen(
 @Composable
 private fun GameItemCard(
     model: GameCardModel,
-    onLaunch: () -> Unit,
+    isBusy: Boolean,
+    onOptimizeAndLaunch: () -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit
 ) {
@@ -376,8 +446,8 @@ private fun GameItemCard(
         }
         Spacer(modifier = Modifier.height(8.dp))
         Button(
-            onClick = onLaunch,
-            enabled = model.isInstalled,
+            onClick = onOptimizeAndLaunch,
+            enabled = model.isInstalled && !isBusy,
             modifier = Modifier
                 .fillMaxWidth()
                 .testTag("launch_game_${model.entity.packageName}"),
@@ -386,9 +456,16 @@ private fun GameItemCard(
                 contentColor = ObsidianDeep
             )
         ) {
-            Icon(Icons.Filled.PlayArrow, contentDescription = stringResource(R.string.cd_launch_game))
+            Icon(Icons.Filled.Bolt, contentDescription = stringResource(R.string.cd_launch_game))
             Spacer(modifier = Modifier.width(4.dp))
-            Text(if (model.isInstalled) "Abrir" else "No instalado")
+            Text(
+                text = when {
+                    !model.isInstalled -> "No instalado"
+                    isBusy -> "Optimizando..."
+                    else -> "Optimizar y abrir"
+                },
+                fontWeight = FontWeight.Bold
+            )
         }
     }
 }

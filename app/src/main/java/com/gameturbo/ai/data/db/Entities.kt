@@ -37,6 +37,8 @@ data class GamingProfileEntity(
     val keepScreenOn: Boolean,
     val hapticFeedback: Boolean,
     val brightnessPercent: Int, // -1 = System default, 10..100 = Preferred level
+    val mediaVolumePercent: Int = -1, // -1 = Keep current, 0..100 = Target media volume
+    val preferredRefreshHz: Int = 0, // 0 = Auto, >0 = Target Hz mode when supported
     val isBuiltIn: Boolean,
     val description: String
 )

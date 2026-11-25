@@ -26,15 +26,18 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.BatteryChargingFull
+import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Brightness6
 import androidx.compose.material.icons.filled.DeveloperBoard
 import androidx.compose.material.icons.filled.DoNotDisturbOn
 import androidx.compose.material.icons.filled.Memory
+import androidx.compose.material.icons.filled.NetworkCheck
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.SdStorage
 import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material.icons.filled.Thermostat
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilledTonalButton
@@ -43,6 +46,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -65,6 +69,7 @@ import com.gameturbo.ai.security.SecurityValidator
 import com.gameturbo.ai.ui.theme.CyberCard
 import com.gameturbo.ai.ui.theme.ElectricRoyalBlue
 import com.gameturbo.ai.ui.theme.JetBrainsMonoFamily
+import com.gameturbo.ai.ui.theme.MetricKeyValueRow
 import com.gameturbo.ai.ui.theme.NeonCyan
 import com.gameturbo.ai.ui.theme.ObsidianDeep
 import com.gameturbo.ai.ui.theme.RadialTelemetryGauge
@@ -80,6 +85,9 @@ import com.gameturbo.ai.ui.theme.TelemetryLineChart
 fun DashboardScreen(
     state: DashboardUiState,
     onRefresh: () -> Unit,
+    onQuickOptimize: () -> Unit,
+    onDismissOptimization: () -> Unit,
+    onTestPing: () -> Unit,
     onToggleFocusMode: () -> Unit,
     onOpenMonitorTab: (Int) -> Unit,
     onOpenGames: () -> Unit,
@@ -105,6 +113,7 @@ fun DashboardScreen(
                 DashboardHeroCard(
                     state = state,
                     onRefresh = onRefresh,
+                    onQuickOptimize = onQuickOptimize,
                     onToggleFocusMode = onToggleFocusMode,
                     onOpenProfiles = onOpenProfiles
                 )
@@ -191,7 +200,7 @@ fun DashboardScreen(
                                     color = thermalColor
                                 )
                             }
-                            Spacer(modifier = Modifier.height(12.dp))
+                            Spacer(modifier = Modifier.height(10.dp))
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(
                                     Icons.Filled.Thermostat,
@@ -207,6 +216,13 @@ fun DashboardScreen(
                                         fontFamily = JetBrainsMonoFamily
                                     ),
                                     color = thermalColor
+                                )
+                            }
+                            snapshot.temperature.thermalHeadroomPercent?.let { margin ->
+                                Text(
+                                    text = "Margen térmico: $margin%",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = StatusInfo
                                 )
                             }
                             Spacer(modifier = Modifier.weight(1f))
@@ -332,6 +348,56 @@ fun DashboardScreen(
                 }
 
                 item {
+                    CyberCard(
+                        modifier = Modifier.clickable(onClick = onTestPing),
+                        accentColor = NeonCyan
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(
+                                    Icons.Filled.NetworkCheck,
+                                    contentDescription = null,
+                                    tint = NeonCyan,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Column {
+                                    Text(
+                                        text = "${snapshot.connectivity.transportLabel} · ${snapshot.display.refreshRateHz.toInt()} Hz",
+                                        style = MaterialTheme.typography.titleMedium
+                                    )
+                                    Text(
+                                        text = when {
+                                            state.isTestingPing -> "Midiendo rutas TCP..."
+                                            state.latestPing != null -> "Ping ${state.latestPing.avgMs} ms · Jitter ${state.latestPing.jitterMs} ms (${state.latestPing.host})"
+                                            else -> "Toca para medir latencia y jitter"
+                                        },
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                            StatusPill(
+                                label = state.latestPing?.let { "${it.avgMs} ms" } ?: "Medir",
+                                color = when {
+                                    state.latestPing == null -> StatusInfo
+                                    state.latestPing.avgMs <= 45 -> StatusOptimal
+                                    state.latestPing.avgMs <= 95 -> StatusElevated
+                                    else -> StatusHigh
+                                }
+                            )
+                        }
+                    }
+                }
+
+                item {
                     CyberCard(accentColor = NeonCyan) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -447,12 +513,60 @@ fun DashboardScreen(
             }
         }
     }
+
+    state.lastOptimization?.let { res ->
+        AlertDialog(
+            onDismissRequest = onDismissOptimization,
+            title = { Text("Optimización completada") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    MetricKeyValueRow("Índice Gaming", "${res.readinessScore}/100", NeonCyan)
+                    MetricKeyValueRow("RAM libre", "${res.ramBeforeMb} -> ${res.ramAfterMb} MB", StatusOptimal)
+                    val freedLabel = if (res.freedTempBytes > 0L) {
+                        "${res.tempFilesCleared} (${Formatter.formatShortFileSize(context, res.freedTempBytes)})"
+                    } else {
+                        "${res.tempFilesCleared} archivos"
+                    }
+                    MetricKeyValueRow("Temp. limpiados", freedLabel)
+                    MetricKeyValueRow("DND sistema", if (res.dndApplied) "Activo" else "Sin cambio")
+                    MetricKeyValueRow("Brillo sistema", if (res.systemBrightnessApplied) "Aplicado" else "Modo ventana")
+                    MetricKeyValueRow("Refresco objetivo", "${res.appliedRefreshHz} Hz")
+                    res.mediaVolumeAppliedPercent?.let {
+                        MetricKeyValueRow("Volumen gaming", "$it%")
+                    }
+                    res.thermalHeadroomPercent?.let {
+                        MetricKeyValueRow("Margen térmico", "$it%", NeonCyan)
+                    }
+                    if (res.isPowerSaveModeActive) {
+                        MetricKeyValueRow("Ahorro energía", "Activo (limita CPU/Hz)", StatusHigh)
+                    }
+                    res.pingResult?.let {
+                        MetricKeyValueRow("Ping (${it.host})", "${it.avgMs} ms · ${it.qualityLabel}", StatusOptimal)
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = onDismissOptimization) { Text("Listo") }
+            },
+            dismissButton = if (res.isPowerSaveModeActive) {
+                {
+                    TextButton(onClick = {
+                        SecurityValidator.safeStartActivity(
+                            context,
+                            Intent(Settings.ACTION_BATTERY_SAVER_SETTINGS)
+                        )
+                    }) { Text("Ajustar ahorro") }
+                }
+            } else null
+        )
+    }
 }
 
 @Composable
 private fun DashboardHeroCard(
     state: DashboardUiState,
     onRefresh: () -> Unit,
+    onQuickOptimize: () -> Unit,
     onToggleFocusMode: () -> Unit,
     onOpenProfiles: () -> Unit
 ) {
@@ -531,6 +645,24 @@ private fun DashboardHeroCard(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                Button(
+                    onClick = onQuickOptimize,
+                    enabled = !state.isOptimizing,
+                    modifier = Modifier.testTag("quick_optimize_button"),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = NeonCyan,
+                        contentColor = ObsidianDeep
+                    )
+                ) {
+                    Icon(Icons.Filled.Bolt, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = if (state.isOptimizing) "Optimizando..." else "Optimizar",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
                 FilledTonalButton(
                     onClick = onToggleFocusMode,
                     modifier = Modifier.testTag("quick_focus_toggle"),
@@ -549,9 +681,9 @@ private fun DashboardHeroCard(
                         contentDescription = null,
                         modifier = Modifier.size(16.dp)
                     )
-                    Spacer(modifier = Modifier.width(6.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
                     Text(
-                        text = if (state.preferences.focusModeEnabled) "Concentración ON" else "Concentración",
+                        text = if (state.preferences.focusModeEnabled) "DND ON" else "DND",
                         style = MaterialTheme.typography.labelMedium
                     )
                 }

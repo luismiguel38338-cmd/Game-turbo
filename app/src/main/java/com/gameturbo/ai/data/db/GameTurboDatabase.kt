@@ -13,7 +13,7 @@ import androidx.room.RoomDatabase
         TelemetrySampleEntity::class,
         SecurityAuditEntity::class
     ],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 abstract class GameTurboDatabase : RoomDatabase() {
@@ -32,7 +32,10 @@ abstract class GameTurboDatabase : RoomDatabase() {
                     context.applicationContext,
                     GameTurboDatabase::class.java,
                     "game_turbo_ai.db"
-                ).build().also { INSTANCE = it }
+                )
+                    .fallbackToDestructiveMigration(dropAllTables = true)
+                    .build()
+                    .also { INSTANCE = it }
             }
         }
     }

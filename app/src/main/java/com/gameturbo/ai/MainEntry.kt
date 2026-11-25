@@ -1,6 +1,10 @@
 package com.gameturbo.ai
 
 import android.app.Activity
+import android.content.Context
+import android.hardware.display.DisplayManager
+import android.os.PowerManager
+import android.view.Display
 import android.view.WindowManager
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
@@ -90,6 +94,7 @@ import com.gameturbo.ai.ui.theme.ObsidianDeep
 import com.gameturbo.ai.ui.theme.RoyalMidnight
 import com.gameturbo.ai.ui.theme.RoyalSurface
 import kotlinx.coroutines.delay
+import kotlin.math.abs
 
 object GameTurboRoutes {
     const val DASHBOARD = "dashboard"
@@ -126,12 +131,14 @@ fun MainEntry(
     val profilesState by profilesVm.uiState.collectAsStateWithLifecycle()
     val advancedState by advancedVm.uiState.collectAsStateWithLifecycle()
 
-    // Apply window-level keepScreenOn and optional brightness preference safely
+    // Apply window-level keepScreenOn, sustained performance mode, preferred refresh rate, and brightness
     val activity = context as? Activity
     val keepScreenOn = dashboardState.preferences.keepScreenOn
     val brightnessPref = dashboardState.preferences.brightnessPercent
+    val sustainedMode = dashboardState.preferences.sustainedPerformanceMode
+    val preferredHz = dashboardState.preferences.preferredRefreshHz
 
-    DisposableEffect(activity, keepScreenOn, brightnessPref) {
+    DisposableEffect(activity, keepScreenOn, brightnessPref, sustainedMode, preferredHz) {
         val window = activity?.window
         if (window != null) {
             if (keepScreenOn) {
@@ -139,11 +146,27 @@ fun MainEntry(
             } else {
                 window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             }
+            val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+            if (pm?.isSustainedPerformanceModeSupported == true) {
+                runCatching { window.setSustainedPerformanceMode(sustainedMode) }
+            }
             val attrs = window.attributes
             attrs.screenBrightness = if (brightnessPref in 10..100) {
                 brightnessPref / 100f
             } else {
                 WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+            }
+            if (preferredHz > 0) {
+                val dm = context.getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager
+                val display = dm?.getDisplay(Display.DEFAULT_DISPLAY)
+                val matchingMode = display?.supportedModes?.minByOrNull {
+                    abs(it.refreshRate - preferredHz.toFloat())
+                }
+                if (matchingMode != null) {
+                    attrs.preferredDisplayModeId = matchingMode.modeId
+                }
+            } else {
+                attrs.preferredDisplayModeId = 0
             }
             window.attributes = attrs
         }
@@ -302,6 +325,9 @@ fun MainEntry(
                             DashboardScreen(
                                 state = dashboardState,
                                 onRefresh = { dashboardVm.refreshNow() },
+                                onQuickOptimize = { dashboardVm.runQuickOptimize() },
+                                onDismissOptimization = { dashboardVm.dismissOptimizationResult() },
+                                onTestPing = { dashboardVm.runPingTest() },
                                 onToggleFocusMode = { dashboardVm.toggleFocusMode() },
                                 onOpenMonitorTab = { tab ->
                                     selectedMonitorSubTab = tab
@@ -325,7 +351,9 @@ fun MainEntry(
                                 },
                                 onUpdateGame = { boosterVm.updateGame(it) },
                                 onRemoveGame = { boosterVm.removeGame(it) },
-                                onLaunchGame = { ctx, model -> boosterVm.launchGame(ctx, model) },
+                                onOptimizeAndLaunch = { model -> boosterVm.optimizeAndPrepareLaunch(model) },
+                                onConfirmLaunch = { ctx, model -> boosterVm.confirmLaunchGame(ctx, model) },
+                                onDismissLaunch = { boosterVm.dismissPendingLaunch() },
                                 onToggleFocusMode = { boosterVm.toggleFocusMode() },
                                 onClearSessions = { boosterVm.clearSessionHistory() }
                             )
@@ -350,9 +378,9 @@ fun MainEntry(
                             ProfilesScreen(
                                 state = profilesState,
                                 onActivateProfile = { profilesVm.activateProfile(it) },
-                                onSaveProfile = { id, name, interval, focus, keepOn, haptic, brightness, desc ->
+                                onSaveProfile = { id, name, interval, focus, keepOn, haptic, brightness, vol, hz, desc ->
                                     profilesVm.saveCustomProfile(
-                                        id, name, interval, focus, keepOn, haptic, brightness, desc
+                                        id, name, interval, focus, keepOn, haptic, brightness, vol, hz, desc
                                     )
                                 },
                                 onDeleteProfile = { profilesVm.deleteProfile(it) }

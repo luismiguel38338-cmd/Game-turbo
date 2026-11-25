@@ -26,6 +26,11 @@ data class GameCardModel(
     val assignedProfileName: String
 )
 
+data class PendingBoostLaunch(
+    val game: GameCardModel,
+    val result: OptimizationResult
+)
+
 data class GameBoosterUiState(
     val registeredGames: List<GameCardModel> = emptyList(),
     val installedLauncherApps: List<LaunchableAppItem> = emptyList(),
@@ -33,6 +38,8 @@ data class GameBoosterUiState(
     val profiles: List<GamingProfileEntity> = emptyList(),
     val focusModeEnabled: Boolean = false,
     val isScanning: Boolean = false,
+    val isOptimizingLaunch: Boolean = false,
+    val pendingBoostLaunch: PendingBoostLaunch? = null,
     val lastScanMessage: String? = null
 )
 
@@ -40,15 +47,35 @@ class GameBoosterViewModel(private val container: AppContainer) : ViewModel() {
 
     private val installedAppsState = MutableStateFlow<List<LaunchableAppItem>>(emptyList())
     private val scanningState = MutableStateFlow(false)
+    private val optimizingLaunchState = MutableStateFlow(false)
+    private val pendingBoostLaunchState = MutableStateFlow<PendingBoostLaunch?>(null)
     private val scanMessageState = MutableStateFlow<String?>(null)
+
+    private val metaFlow = combine(
+        installedAppsState,
+        scanningState,
+        optimizingLaunchState,
+        pendingBoostLaunchState,
+        scanMessageState
+    ) { apps, scanning, optimizing, pending, msg ->
+        MetaExtras(apps, scanning, optimizing, pending, msg)
+    }
+
+    private data class MetaExtras(
+        val apps: List<LaunchableAppItem>,
+        val scanning: Boolean,
+        val optimizing: Boolean,
+        val pending: PendingBoostLaunch?,
+        val msg: String?
+    )
 
     val uiState: StateFlow<GameBoosterUiState> = combine(
         container.gameRepository.registeredGames,
         container.gameRepository.sessions,
         container.profileRepository.profiles,
         container.preferencesRepository.preferencesFlow,
-        installedAppsState
-    ) { games, sessions, profiles, prefs, installedApps ->
+        metaFlow
+    ) { games, sessions, profiles, prefs, meta ->
         val profileMap = profiles.associateBy { it.id }
         val cards = games.map { game ->
             val launchable = container.gameRepository.getLaunchIntent(game.packageName) != null
@@ -61,12 +88,14 @@ class GameBoosterViewModel(private val container: AppContainer) : ViewModel() {
         }
         GameBoosterUiState(
             registeredGames = cards,
-            installedLauncherApps = installedApps,
+            installedLauncherApps = meta.apps,
             sessions = sessions,
             profiles = profiles,
             focusModeEnabled = prefs.focusModeEnabled,
-            isScanning = scanningState.value,
-            lastScanMessage = scanMessageState.value
+            isScanning = meta.scanning,
+            isOptimizingLaunch = meta.optimizing,
+            pendingBoostLaunch = meta.pending,
+            lastScanMessage = meta.msg
         )
     }.stateIn(
         scope = viewModelScope,
@@ -86,9 +115,9 @@ class GameBoosterViewModel(private val container: AppContainer) : ViewModel() {
                 val apps = container.gameRepository.queryInstalledLauncherApps()
                 installedAppsState.value = apps
                 scanMessageState.value = if (detected > 0) {
-                    "Detectados $detected videojuegos con categoría GAME."
+                    "Detectados $detected videojuegos."
                 } else {
-                    "No se detectaron apps con CATEGORY_GAME; puedes añadir juegos manualmente desde tus apps instaladas."
+                    "Sin apps CATEGORY_GAME; puedes añadir juegos manualmente."
                 }
             }
             scanningState.value = false
@@ -128,6 +157,7 @@ class GameBoosterViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch {
             val next = !uiState.value.focusModeEnabled
             container.preferencesRepository.setFocusMode(next)
+            container.optimizerEngine.applySystemDnd(next)
         }
     }
 
@@ -137,18 +167,39 @@ class GameBoosterViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
-    fun launchGame(context: Context, model: GameCardModel) {
+    fun optimizeAndPrepareLaunch(model: GameCardModel) {
+        viewModelScope.launch {
+            optimizingLaunchState.value = true
+            runCatching {
+                val assignedProfile = model.entity.assignedProfileId?.let { id ->
+                    uiState.value.profiles.firstOrNull { it.id == id }
+                }
+                if (assignedProfile != null) {
+                    container.profileRepository.activateProfile(assignedProfile)
+                }
+                val result = container.optimizerEngine.runOptimizationPipeline(
+                    targetPackage = model.entity.packageName,
+                    profile = assignedProfile,
+                    enableFocusMode = model.entity.focusModeEnabled || uiState.value.focusModeEnabled,
+                    measurePing = true
+                )
+                pendingBoostLaunchState.value = PendingBoostLaunch(model, result)
+            }
+            optimizingLaunchState.value = false
+        }
+    }
+
+    fun dismissPendingLaunch() {
+        pendingBoostLaunchState.value = null
+    }
+
+    fun confirmLaunchGame(context: Context, model: GameCardModel) {
+        pendingBoostLaunchState.value = null
         viewModelScope.launch {
             val snapshot = container.telemetryRepository.captureImmediate()
             val assignedProfile = model.entity.assignedProfileId?.let { id ->
                 uiState.value.profiles.firstOrNull { it.id == id }
             }
-            if (assignedProfile != null) {
-                container.profileRepository.activateProfile(assignedProfile)
-            } else if (model.entity.focusModeEnabled) {
-                container.preferencesRepository.setFocusMode(true)
-            }
-
             container.gameRepository.recordSessionLaunch(
                 game = model.entity,
                 profileName = assignedProfile?.name ?: "Perfil actual",
@@ -165,14 +216,14 @@ class GameBoosterViewModel(private val container: AppContainer) : ViewModel() {
                 } catch (_: Exception) {
                     Toast.makeText(
                         context,
-                        "No se pudo abrir ${model.entity.displayName} en este dispositivo.",
+                        "No se pudo abrir ${model.entity.displayName}.",
                         Toast.LENGTH_SHORT
                     ).show()
                 }
             } else {
                 Toast.makeText(
                     context,
-                    "${model.entity.displayName} no está instalado o no tiene actividad lanzable.",
+                    "${model.entity.displayName} no está instalado.",
                     Toast.LENGTH_SHORT
                 ).show()
             }

@@ -51,6 +51,7 @@ data class TemperatureTelemetry(
     val batteryTempC: Float?,
     val ambientTempC: Float?,
     val systemThermalStatus: String,
+    val thermalHeadroomPercent: Int?,
     val level: ThermalLevel,
     val sensorNote: String
 )
@@ -75,7 +76,17 @@ data class DisplaySnapshot(
     val heightPx: Int,
     val densityDpi: Int,
     val refreshRateHz: Float,
+    val supportedRefreshRatesHz: List<Int>,
     val hdrSupported: Boolean
+)
+
+data class PingResult(
+    val avgMs: Int,
+    val minMs: Int,
+    val maxMs: Int,
+    val jitterMs: Int,
+    val qualityLabel: String,
+    val host: String
 )
 
 data class DeviceSnapshot(
@@ -85,6 +96,9 @@ data class DeviceSnapshot(
     val androidVersion: String,
     val sdkInt: Int,
     val securityPatch: String,
+    val sustainedPerformanceSupported: Boolean,
+    val isPowerSaveMode: Boolean,
+    val gamingReadinessScore: Int,
     val ram: RamTelemetry,
     val cpu: CpuTelemetry,
     val battery: BatteryTelemetry,
