@@ -1,0 +1,18 @@
+<resources>
+    <string name="app_name">Game Turbo AI</string>
+    <string name="nav_dashboard">Panel</string>
+    <string name="nav_booster">Juegos</string>
+    <string name="nav_monitor">Monitor</string>
+    <string name="nav_profiles">Perfiles</string>
+    <string name="nav_advanced">Avanzado</string>
+    <string name="cd_app_logo">Logotipo de Game Turbo AI</string>
+    <string name="cd_hero_banner">Fondo tecnológico de telemetría gaming</string>
+    <string name="cd_refresh_telemetry">Actualizar telemetría ahora</string>
+    <string name="cd_launch_game">Abrir juego</string>
+    <string name="cd_game_icon">Icono de aplicación</string>
+    <string name="cd_delete_file">Eliminar archivo seleccionado</string>
+    <string name="cd_edit_profile">Editar perfil</string>
+    <string name="cd_delete_profile">Eliminar perfil</string>
+    <string name="cd_open_system_setting">Abrir ajuste del sistema</string>
+    <string name="cd_navigate_back">Volver atrás</string>
+</resources>

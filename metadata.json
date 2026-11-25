@@ -1,0 +1,6 @@
+{
+  "name": "Game Turbo AI",
+  "description": "Centro de control gaming nativo para Android con telemetría real de hardware, monitorización de RAM/CPU/batería/temperatura, Game Booster, perfiles de rendimiento y consola externa Termux.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

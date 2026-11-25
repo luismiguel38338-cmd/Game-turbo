@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="obsidian_bg">#FF050914</color>
+    <color name="royal_navy">#FF0B1736</color>
+    <color name="electric_blue">#FF2563EB</color>
+    <color name="neon_cyan">#FF00E5FF</color>
+    <color name="ic_launcher_bg">#FF060D1F</color>
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+</resources>
